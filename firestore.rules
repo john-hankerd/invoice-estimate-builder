@@ -1,0 +1,27 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Business profile. Only the owner can ever read or write it — unlike
+    // ScanNow, nothing here needs to be visible to other authenticated users.
+    // Business details shown on a sent invoice/estimate are copied onto the
+    // doc itself at send time (see /docs below), not read live from here.
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Invoices and estimates. The document ID *is* the random public view
+    // token (see randomToken() in util.js) — this is what makes the
+    // customer-facing view page work without the customer ever signing in:
+    // anyone holding the exact link (i.e. the exact doc ID) can read it via
+    // `get`, but nobody can enumerate/browse other people's documents,
+    // because `list` is scoped to the owner and `get` requires already
+    // knowing the unguessable ID.
+    match /docs/{docId} {
+      allow get: if true;
+      allow list: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+    }
+  }
+}
