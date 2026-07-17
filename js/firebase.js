@@ -2,15 +2,13 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.13.0/fireba
 import { getAuth } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
 import { getFirestore } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
 
-// TODO: replace with the web config from the new Firebase project for this
-// app (Project Settings > General > Your apps > SDK setup and configuration).
 const firebaseConfig = {
-  apiKey: "REPLACE_ME",
-  authDomain: "REPLACE_ME.firebaseapp.com",
-  projectId: "REPLACE_ME",
-  storageBucket: "REPLACE_ME.firebasestorage.app",
-  messagingSenderId: "REPLACE_ME",
-  appId: "REPLACE_ME",
+  apiKey: "AIzaSyDxRz_k38Ys7a-77Ml2AOfQmo9St4JQK5k",
+  authDomain: "invoice-builder-33a11.firebaseapp.com",
+  projectId: "invoice-builder-33a11",
+  storageBucket: "invoice-builder-33a11.firebasestorage.app",
+  messagingSenderId: "700247427935",
+  appId: "1:700247427935:web:6a83a50b7c2552d8ecc4ea",
 };
 
 const app = initializeApp(firebaseConfig);
