@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Invoice &amp; Estimate Builder</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+<div class="screen" id="editScreen" style="display:none;">
+  <div class="app-header">
+    <div style="display:flex; align-items:center; gap:10px;">
+      <a href="app.html" style="font-size:20px; padding:4px;">←</a>
+      <div style="font-weight:800; font-size:17px;" id="pageTitle">New Invoice</div>
+    </div>
+  </div>
+
+  <div class="app-body" style="max-width:640px; padding-bottom:120px;">
+    <div class="error-msg" id="errorMsg"></div>
+
+    <div class="card" style="max-width:none; margin-bottom:16px;">
+      <div class="card-title" style="font-size:15px;">Customer</div>
+      <div class="field-row">
+        <div class="field">
+          <label for="customerName">Name</label>
+          <input type="text" id="customerName" placeholder="Customer name">
+        </div>
+        <div class="field">
+          <label for="customerEmail">Email</label>
+          <input type="email" id="customerEmail" placeholder="customer@example.com">
+        </div>
+      </div>
+      <div class="field">
+        <label for="dueDate" id="dueDateLabel">Due date</label>
+        <input type="date" id="dueDate">
+      </div>
+    </div>
+
+    <div class="card" style="max-width:none; margin-bottom:16px;">
+      <div class="card-title" style="font-size:15px;">Line Items</div>
+      <div class="line-items" id="lineItems">
+        <div class="line-item-row header">
+          <div>Description</div>
+          <div>Qty</div>
+          <div>Price</div>
+          <div>Total</div>
+          <div></div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-outline btn-sm" id="addLineBtn" style="margin-top:10px;">+ Add Line Item</button>
+
+      <div class="totals-box">
+        <div class="totals-row">
+          <span>Subtotal</span>
+          <span id="subtotalDisplay">$0.00</span>
+        </div>
+        <div class="totals-row">
+          <span>Tax (<input type="number" id="taxRate" value="0" min="0" max="100" step="0.1" style="width:50px; border:1px solid var(--border); border-radius:6px; padding:2px 4px;">%)</span>
+          <span id="taxDisplay">$0.00</span>
+        </div>
+        <div class="totals-row grand">
+          <span>Total</span>
+          <span id="totalDisplay">$0.00</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="max-width:none; margin-bottom:16px;">
+      <div class="card-title" style="font-size:15px;">Notes <span style="font-weight:400; color:var(--ink-faint);">(optional)</span></div>
+      <textarea id="notes" rows="3" style="width:100%; border:1px solid var(--border); border-radius:10px; padding:12px 14px; background:var(--bg);" placeholder="Payment terms, thank-you note, etc."></textarea>
+    </div>
+
+    <div style="display:flex; gap:10px;">
+      <button class="btn btn-outline" id="saveDraftBtn">Save Draft</button>
+      <button class="btn btn-primary" id="sendBtn">Send to Customer</button>
+    </div>
+  </div>
+</div>
+
+<div class="loading-center" id="loadingScreen">Loading...</div>
+
+<script type="module">
+import { auth, db } from './js/firebase.js';
+import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
+import { doc, getDoc, setDoc, updateDoc } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
+import { randomToken, formatMoney, dollarsToCents, docNumber, appUrl, registerServiceWorker } from './js/util.js';
+
+registerServiceWorker();
+
+const params = new URLSearchParams(window.location.search);
+const docType = params.get('type') === 'estimate' ? 'estimate' : 'invoice';
+const existingId = params.get('id');
+
+let currentUser = null;
+let myProfile = null;
+let docId = existingId || randomToken(20);
+let existingDoc = null;
+
+document.getElementById('pageTitle').textContent = existingId
+  ? `Edit ${docType === 'estimate' ? 'Estimate' : 'Invoice'}`
+  : `New ${docType === 'estimate' ? 'Estimate' : 'Invoice'}`;
+document.getElementById('dueDateLabel').textContent = docType === 'estimate' ? 'Valid until' : 'Due date';
+document.getElementById('sendBtn').textContent = docType === 'estimate' ? 'Send Estimate' : 'Send Invoice';
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) { window.location.href = 'login.html'; return; }
+  currentUser = user;
+
+  const profileSnap = await getDoc(doc(db, 'users', user.uid));
+  myProfile = profileSnap.data();
+
+  if (existingId) {
+    const snap = await getDoc(doc(db, 'docs', existingId));
+    if (!snap.exists() || snap.data().ownerUid !== user.uid) {
+      window.location.href = 'app.html';
+      return;
+    }
+    existingDoc = snap.data();
+    if (existingDoc.status !== 'draft') {
+      // Already sent — don't allow silent edits to something the customer
+      // has already seen. Send them to the read-only view instead.
+      window.location.href = `view.html?id=${existingId}`;
+      return;
+    }
+    populateForm(existingDoc);
+  } else {
+    addLineItemRow();
+  }
+
+  document.getElementById('loadingScreen').style.display = 'none';
+  document.getElementById('editScreen').style.display = 'flex';
+});
+
+function populateForm(data) {
+  document.getElementById('customerName').value = data.customerName || '';
+  document.getElementById('customerEmail').value = data.customerEmail || '';
+  document.getElementById('dueDate').value = data.dueDate || '';
+  document.getElementById('taxRate').value = data.taxRate || 0;
+  document.getElementById('notes').value = data.notes || '';
+  (data.lineItems || []).forEach((item) => addLineItemRow(item));
+  if (!data.lineItems || data.lineItems.length === 0) addLineItemRow();
+  recalcTotals();
+}
+
+/* ---------- Line items ---------- */
+function addLineItemRow(item) {
+  const row = document.createElement('div');
+  row.className = 'line-item-row';
+  row.innerHTML = `
+    <input type="text" class="li-desc" placeholder="Description" value="${item ? escapeAttr(item.description) : ''}">
+    <input type="number" class="li-qty" placeholder="1" min="0" step="1" value="${item ? item.qty : 1}">
+    <input type="number" class="li-price" placeholder="0.00" min="0" step="0.01" value="${item ? (item.unitPriceCents / 100).toFixed(2) : ''}">
+    <div class="li-total" style="font-weight:700; text-align:right;">$0.00</div>
+    <button type="button" class="line-item-remove" title="Remove">✕</button>
+  `;
+  row.querySelectorAll('input').forEach(input => input.addEventListener('input', recalcTotals));
+  row.querySelector('.line-item-remove').addEventListener('click', () => { row.remove(); recalcTotals(); });
+  document.getElementById('lineItems').appendChild(row);
+  recalcTotals();
+}
+
+function escapeAttr(str) {
+  return (str || '').replace(/"/g, '&quot;');
+}
+
+document.getElementById('addLineBtn').addEventListener('click', () => addLineItemRow());
+
+function getLineItems() {
+  return Array.from(document.querySelectorAll('#lineItems .line-item-row:not(.header)')).map((row) => {
+    const description = row.querySelector('.li-desc').value.trim();
+    const qty = parseFloat(row.querySelector('.li-qty').value) || 0;
+    const unitPriceCents = dollarsToCents(row.querySelector('.li-price').value);
+    return { description, qty, unitPriceCents, lineTotalCents: Math.round(qty * unitPriceCents) };
+  });
+}
+
+function recalcTotals() {
+  document.querySelectorAll('#lineItems .line-item-row:not(.header)').forEach((row) => {
+    const qty = parseFloat(row.querySelector('.li-qty').value) || 0;
+    const unitPriceCents = dollarsToCents(row.querySelector('.li-price').value);
+    row.querySelector('.li-total').textContent = formatMoney(Math.round(qty * unitPriceCents));
+  });
+
+  const items = getLineItems();
+  const subtotalCents = items.reduce((sum, i) => sum + i.lineTotalCents, 0);
+  const taxRate = parseFloat(document.getElementById('taxRate').value) || 0;
+  const taxCents = Math.round(subtotalCents * (taxRate / 100));
+  const totalCents = subtotalCents + taxCents;
+
+  document.getElementById('subtotalDisplay').textContent = formatMoney(subtotalCents);
+  document.getElementById('taxDisplay').textContent = formatMoney(taxCents);
+  document.getElementById('totalDisplay').textContent = formatMoney(totalCents);
+
+  return { subtotalCents, taxCents, totalCents, taxRate };
+}
+
+document.getElementById('taxRate').addEventListener('input', recalcTotals);
+
+/* ---------- Validation ---------- */
+function showError(msg) {
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+function clearError() {
+  document.getElementById('errorMsg').classList.remove('visible');
+}
+
+function buildDocPayload(status) {
+  const customerName = document.getElementById('customerName').value.trim();
+  const customerEmail = document.getElementById('customerEmail').value.trim();
+  const dueDate = document.getElementById('dueDate').value;
+  const notes = document.getElementById('notes').value.trim();
+  const items = getLineItems().filter(i => i.description);
+  const { subtotalCents, taxCents, totalCents, taxRate } = recalcTotals();
+
+  return {
+    customerName, customerEmail, dueDate, notes,
+    lineItems: items,
+    subtotalCents, taxCents, totalCents, taxRate,
+    type: docType,
+    status,
+    business: {
+      name: myProfile.businessName || '',
+      email: myProfile.email || '',
+      phone: myProfile.phone || '',
+      address: myProfile.address || '',
+      logoUrl: myProfile.logoUrl || '',
+    },
+  };
+}
+
+async function saveDoc(status) {
+  clearError();
+  const customerName = document.getElementById('customerName').value.trim();
+  const customerEmail = document.getElementById('customerEmail').value.trim();
+  const items = getLineItems().filter(i => i.description);
+
+  if (!customerName) { showError('Please enter a customer name.'); return null; }
+  if (status === 'sent' && !customerEmail) { showError('Please enter a customer email to send this.'); return null; }
+  if (items.length === 0) { showError('Please add at least one line item.'); return null; }
+
+  const payload = buildDocPayload(status);
+  payload.ownerUid = currentUser.uid;
+  payload.updatedAt = new Date().toISOString();
+
+  if (existingDoc) {
+    payload.createdAt = existingDoc.createdAt;
+    payload.number = existingDoc.number;
+  } else {
+    payload.createdAt = new Date().toISOString();
+    const nextNum = (myProfile.docCounter || 0) + 1;
+    payload.number = docNumber(nextNum);
+    await updateDoc(doc(db, 'users', currentUser.uid), { docCounter: nextNum });
+    myProfile.docCounter = nextNum;
+  }
+
+  if (status === 'sent' && !existingDoc?.sentAt) {
+    payload.sentAt = new Date().toISOString();
+  } else if (existingDoc?.sentAt) {
+    payload.sentAt = existingDoc.sentAt;
+  }
+
+  await setDoc(doc(db, 'docs', docId), payload, { merge: true });
+  return payload;
+}
+
+document.getElementById('saveDraftBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('saveDraftBtn');
+  btn.disabled = true;
+  const result = await saveDoc('draft');
+  btn.disabled = false;
+  if (result) window.location.href = 'app.html';
+});
+
+document.getElementById('sendBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('sendBtn');
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  const result = await saveDoc('sent');
+  if (!result) {
+    btn.disabled = false;
+    btn.textContent = docType === 'estimate' ? 'Send Estimate' : 'Send Invoice';
+    return;
+  }
+
+  try {
+    await fetch('.netlify/functions/send-document-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        docId,
+        viewUrl: appUrl(`view.html?id=${docId}`),
+      }),
+    });
+  } catch (e) {
+    // Non-fatal — the doc is saved and the link works even if the email
+    // send failed; the business can still copy/share the link manually.
+  }
+
+  window.location.href = 'app.html';
+});
+</script>
+
+</body>
+</html>

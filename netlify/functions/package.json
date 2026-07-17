@@ -1,0 +1,8 @@
+{
+  "name": "invoice-estimate-builder-functions",
+  "version": "1.0.0",
+  "description": "Netlify serverless functions for Invoice & Estimate Builder",
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}

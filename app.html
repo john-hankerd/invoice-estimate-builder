@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Invoice &amp; Estimate Builder</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+<div class="screen" id="billingGate" style="display:none;">
+  <div class="center-screen">
+    <div class="brand">
+      <div class="brand-mark">🧾</div>
+      <div class="brand-name">Invoicing</div>
+    </div>
+    <div class="card" style="text-align:center;">
+      <div class="card-title" id="gateTitle">Your trial has ended</div>
+      <div class="card-sub" id="gateSub">Subscribe for $20/mo to keep creating and sending invoices.</div>
+      <button class="btn btn-primary" id="reactivateBtn">Resubscribe</button>
+      <button class="btn btn-outline" id="gateSignOutBtn" style="margin-top:10px;">Sign Out</button>
+    </div>
+  </div>
+</div>
+
+<div class="screen" id="mainScreen" style="display:none;">
+  <div class="app-header">
+    <div class="brand" style="margin:0;">
+      <div class="brand-mark" style="width:32px;height:32px;font-size:16px;">🧾</div>
+      <div class="brand-name" style="font-size:17px;">Invoicing</div>
+    </div>
+    <div id="trialBadge" style="font-size:12px; color:var(--ink-soft); display:none;"></div>
+  </div>
+
+  <div class="app-body">
+
+    <!-- INVOICES TAB -->
+    <div class="tab-panel active" id="panel-invoices">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <h2 style="margin:0; font-size:18px;">Invoices</h2>
+        <a href="edit.html?type=invoice" class="btn btn-primary btn-sm">+ New Invoice</a>
+      </div>
+      <div id="invoicesList">
+        <div class="empty-state"><div class="empty-icon">🧾</div><div class="empty-title">No invoices yet</div><div class="empty-desc">Create your first invoice to get started.</div></div>
+      </div>
+    </div>
+
+    <!-- ESTIMATES TAB -->
+    <div class="tab-panel" id="panel-estimates">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <h2 style="margin:0; font-size:18px;">Estimates</h2>
+        <a href="edit.html?type=estimate" class="btn btn-primary btn-sm">+ New Estimate</a>
+      </div>
+      <div id="estimatesList">
+        <div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No estimates yet</div><div class="empty-desc">Create an estimate to send a customer a quote.</div></div>
+      </div>
+    </div>
+
+    <!-- SETTINGS TAB -->
+    <div class="tab-panel" id="panel-settings">
+      <h2 style="margin:0 0 14px; font-size:18px;">Business Profile</h2>
+      <div class="card" style="max-width:none;">
+        <div class="card-sub" style="margin-bottom:14px;">This shows up on every invoice and estimate you send.</div>
+
+        <div style="display:flex; align-items:center; gap:14px; margin-bottom:16px;">
+          <div class="avatar avatar-lg" id="logoPreview">🧾</div>
+          <button type="button" class="btn btn-outline btn-sm" id="uploadLogoBtn">Upload Logo</button>
+          <input type="file" id="logoInput" accept="image/*" style="display:none;">
+        </div>
+
+        <div class="field">
+          <label for="businessNameInput">Business name</label>
+          <input type="text" id="businessNameInput">
+        </div>
+        <div class="field">
+          <label for="phoneInput">Phone</label>
+          <input type="tel" id="phoneInput">
+        </div>
+        <div class="field">
+          <label for="addressInput">Address</label>
+          <textarea id="addressInput" rows="2"></textarea>
+        </div>
+        <button class="btn btn-primary" id="saveProfileBtn">Save</button>
+      </div>
+
+      <h2 style="margin:24px 0 14px; font-size:18px;">Billing</h2>
+      <div class="card" style="max-width:none;">
+        <div class="card-sub" id="billingStatusText" style="margin-bottom:14px;"></div>
+        <button class="btn btn-outline" id="managePlanBtn">Manage Subscription</button>
+      </div>
+
+      <h2 style="margin:24px 0 14px; font-size:18px;">Accept Online Payments</h2>
+      <div class="card" style="max-width:none;">
+        <div class="card-sub" id="connectStatusText" style="margin-bottom:14px;">Connect a Stripe account so customers can pay your invoices online.</div>
+        <button class="btn btn-outline" id="connectStripeBtn">Connect Stripe</button>
+      </div>
+
+      <button class="btn btn-outline" id="signOutBtn" style="margin-top:24px;">Sign Out</button>
+    </div>
+
+  </div>
+
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="invoices"><span class="tab-icon">🧾</span><span class="tab-label">Invoices</span></button>
+    <button class="tab-btn" data-tab="estimates"><span class="tab-icon">📋</span><span class="tab-label">Estimates</span></button>
+    <button class="tab-btn" data-tab="settings"><span class="tab-icon">⚙</span><span class="tab-label">Settings</span></button>
+  </div>
+</div>
+
+<div class="loading-center" id="loadingScreen">Loading...</div>
+
+<script type="module">
+import { auth, db } from './js/firebase.js';
+import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
+import { doc, getDoc, onSnapshot, updateDoc, collection, query, where, orderBy } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
+import { registerServiceWorker, resizeImageToDataUrl, appUrl, formatMoney, formatDate } from './js/util.js';
+
+registerServiceWorker();
+
+let currentUser = null;
+let myProfile = null;
+
+const ACTIVE_STATUSES = ['trialing', 'active'];
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) { window.location.href = 'login.html'; return; }
+  currentUser = user;
+
+  onSnapshot(doc(db, 'users', user.uid), (snap) => {
+    if (!snap.exists()) return;
+    myProfile = snap.data();
+    render();
+  });
+
+  listenDocs('invoice', 'invoicesList', '🧾', 'No invoices yet', 'Create your first invoice to get started.');
+  listenDocs('estimate', 'estimatesList', '📋', 'No estimates yet', 'Create an estimate to send a customer a quote.');
+});
+
+const STATUS_LABELS = { draft: 'Draft', sent: 'Sent', paid: 'Paid', overdue: 'Overdue', approved: 'Approved', declined: 'Declined' };
+
+function listenDocs(type, listElId, emptyIcon, emptyTitle, emptyDesc) {
+  const q = query(collection(db, 'docs'), where('ownerUid', '==', currentUser.uid), where('type', '==', type));
+  onSnapshot(q, (snap) => {
+    const list = document.getElementById(listElId);
+    if (snap.empty) {
+      list.innerHTML = `<div class="empty-state"><div class="empty-icon">${emptyIcon}</div><div class="empty-title">${emptyTitle}</div><div class="empty-desc">${emptyDesc}</div></div>`;
+      return;
+    }
+    const docs = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    list.innerHTML = docs.map((d) => {
+      const href = d.status === 'draft' ? `edit.html?id=${d.id}` : `view.html?id=${d.id}&owner=1`;
+      const statusClass = `status-${d.status}`;
+      return `<a class="list-item" href="${href}">
+        <div class="list-item-info">
+          <div class="list-item-name">#${d.number || '----'} — ${d.customerName || 'Untitled'}</div>
+          <div class="list-item-sub">${d.dueDate ? formatDate(d.dueDate) : 'No date set'} · <span class="status-badge ${statusClass}">${STATUS_LABELS[d.status] || d.status}</span></div>
+        </div>
+        <div class="list-item-amount">${formatMoney(d.totalCents)}</div>
+      </a>`;
+    }).join('');
+  });
+}
+
+function render() {
+  document.getElementById('loadingScreen').style.display = 'none';
+
+  if (!ACTIVE_STATUSES.includes(myProfile.subscriptionStatus)) {
+    document.getElementById('mainScreen').style.display = 'none';
+    document.getElementById('billingGate').style.display = 'flex';
+    if (myProfile.subscriptionStatus === 'pending_checkout') {
+      document.getElementById('gateTitle').textContent = 'Finish setting up your account';
+      document.getElementById('gateSub').textContent = "You'll need to add payment details to start your free trial.";
+      document.getElementById('reactivateBtn').textContent = 'Continue to Payment Details';
+    }
+    return;
+  }
+
+  document.getElementById('billingGate').style.display = 'none';
+  document.getElementById('mainScreen').style.display = 'flex';
+
+  document.getElementById('businessNameInput').value = myProfile.businessName || '';
+  document.getElementById('phoneInput').value = myProfile.phone || '';
+  document.getElementById('addressInput').value = myProfile.address || '';
+
+  const logoPreview = document.getElementById('logoPreview');
+  logoPreview.innerHTML = myProfile.logoUrl ? `<img src="${myProfile.logoUrl}" alt="">` : '🧾';
+
+  const trialBadge = document.getElementById('trialBadge');
+  if (myProfile.subscriptionStatus === 'trialing' && myProfile.trialEndsAt) {
+    const daysLeft = Math.max(0, Math.ceil((new Date(myProfile.trialEndsAt) - new Date()) / 86400000));
+    trialBadge.textContent = `Trial: ${daysLeft} day${daysLeft === 1 ? '' : 's'} left`;
+    trialBadge.style.display = '';
+  } else {
+    trialBadge.style.display = 'none';
+  }
+
+  const billingStatusText = document.getElementById('billingStatusText');
+  if (myProfile.subscriptionStatus === 'trialing') {
+    billingStatusText.textContent = `You're on your free trial${myProfile.trialEndsAt ? ` until ${new Date(myProfile.trialEndsAt).toLocaleDateString()}` : ''}. $20/mo after that.`;
+  } else {
+    billingStatusText.textContent = "You're subscribed at $20/mo.";
+  }
+
+  const connectStatusText = document.getElementById('connectStatusText');
+  const connectBtn = document.getElementById('connectStripeBtn');
+  if (myProfile.stripeConnectOnboarded) {
+    connectStatusText.textContent = 'Your Stripe account is connected. Customers can pay your invoices online.';
+    connectBtn.textContent = 'Manage Stripe Account';
+  } else {
+    connectStatusText.textContent = 'Connect a Stripe account so customers can pay your invoices online.';
+    connectBtn.textContent = 'Connect Stripe';
+  }
+}
+
+/* ---------- Billing gate ---------- */
+document.getElementById('reactivateBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('reactivateBtn');
+  btn.disabled = true;
+  btn.textContent = 'Please wait...';
+  const res = await fetch('.netlify/functions/create-checkout-session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      uid: currentUser.uid,
+      email: currentUser.email,
+      successUrl: appUrl('billing-success.html?session_id={CHECKOUT_SESSION_ID}'),
+      cancelUrl: appUrl('app.html'),
+    }),
+  });
+  const data = await res.json();
+  if (data.checkout_url) {
+    window.location.href = data.checkout_url;
+  } else {
+    btn.disabled = false;
+    btn.textContent = 'Resubscribe';
+  }
+});
+
+document.getElementById('gateSignOutBtn').addEventListener('click', async () => {
+  await signOut(auth);
+  window.location.href = 'login.html';
+});
+
+/* ---------- Tabs ---------- */
+document.querySelectorAll('.tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+/* ---------- Profile ---------- */
+document.getElementById('uploadLogoBtn').addEventListener('click', () => document.getElementById('logoInput').click());
+document.getElementById('logoInput').addEventListener('change', async () => {
+  const file = document.getElementById('logoInput').files[0];
+  if (!file) return;
+  const dataUrl = await resizeImageToDataUrl(file, 300, 0.85);
+  document.getElementById('logoPreview').innerHTML = `<img src="${dataUrl}" alt="">`;
+  await updateDoc(doc(db, 'users', currentUser.uid), { logoUrl: dataUrl });
+});
+
+document.getElementById('saveProfileBtn').addEventListener('click', async () => {
+  await updateDoc(doc(db, 'users', currentUser.uid), {
+    businessName: document.getElementById('businessNameInput').value.trim(),
+    phone: document.getElementById('phoneInput').value.trim(),
+    address: document.getElementById('addressInput').value.trim(),
+  });
+});
+
+/* ---------- Billing management ---------- */
+document.getElementById('managePlanBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('managePlanBtn');
+  btn.disabled = true;
+  btn.textContent = 'Please wait...';
+  const res = await fetch('.netlify/functions/create-portal-session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customerId: myProfile.stripeCustomerId, returnUrl: appUrl('app.html') }),
+  });
+  const data = await res.json();
+  btn.disabled = false;
+  btn.textContent = 'Manage Subscription';
+  if (data.url) window.location.href = data.url;
+});
+
+/* ---------- Stripe Connect ---------- */
+document.getElementById('connectStripeBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('connectStripeBtn');
+  btn.disabled = true;
+  btn.textContent = 'Please wait...';
+  const res = await fetch('.netlify/functions/create-connect-link', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      uid: currentUser.uid,
+      returnUrl: appUrl('app.html?connected=1'),
+      refreshUrl: appUrl('app.html'),
+    }),
+  });
+  const data = await res.json();
+  btn.disabled = false;
+  if (data.url) {
+    window.location.href = data.url;
+  } else {
+    btn.textContent = 'Connect Stripe';
+  }
+});
+
+document.getElementById('signOutBtn').addEventListener('click', async () => {
+  await signOut(auth);
+  window.location.href = 'login.html';
+});
+</script>
+
+</body>
+</html>

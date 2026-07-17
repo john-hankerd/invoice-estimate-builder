@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Setting up your account — Invoice &amp; Estimate Builder</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+<div class="screen">
+  <div class="center-screen">
+    <div class="brand">
+      <div class="brand-mark">🧾</div>
+      <div class="brand-name">Invoicing</div>
+    </div>
+    <div class="card" style="text-align:center;">
+      <div class="card-title" id="statusTitle">Setting up your account...</div>
+      <div class="card-sub" id="statusSub">This only takes a few seconds.</div>
+      <div class="error-msg" id="errorMsg"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { auth, db } from './js/firebase.js';
+import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
+import { doc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
+
+const errorMsg = document.getElementById('errorMsg');
+const statusSub = document.getElementById('statusSub');
+
+let timeoutFired = false;
+const giveUpTimer = setTimeout(() => {
+  timeoutFired = true;
+  statusSub.textContent = "This is taking longer than expected.";
+  errorMsg.textContent = "If this doesn't finish in a minute, refresh this page — your payment went through, we're just waiting to hear back from Stripe.";
+  errorMsg.classList.add('visible');
+}, 20000);
+
+onAuthStateChanged(auth, (user) => {
+  if (!user) { window.location.href = 'login.html'; return; }
+
+  onSnapshot(doc(db, 'users', user.uid), (snap) => {
+    const status = snap.data()?.subscriptionStatus;
+    if (status && status !== 'pending_checkout') {
+      clearTimeout(giveUpTimer);
+      window.location.href = 'app.html';
+    }
+  });
+});
+</script>
+
+</body>
+</html>

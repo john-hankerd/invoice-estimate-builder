@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Invoice &amp; Estimate Builder — Sign in</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+<div class="screen">
+  <div class="center-screen">
+    <div class="brand">
+      <div class="brand-mark">🧾</div>
+      <div class="brand-name">Invoicing</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" id="cardTitle">Welcome back</div>
+      <div class="card-sub" id="cardSub">Sign in to your account.</div>
+
+      <div class="error-msg" id="errorMsg"></div>
+
+      <form id="authForm">
+        <div class="field" id="businessNameField" style="display:none;">
+          <label for="businessName">Business name</label>
+          <input type="text" id="businessName" autocomplete="organization" placeholder="Your Business LLC">
+        </div>
+
+        <div class="field" id="phoneField" style="display:none;">
+          <label for="phone">Phone <span style="font-weight:400; color:var(--ink-faint);">(optional)</span></label>
+          <input type="tel" id="phone" autocomplete="tel" placeholder="(555) 555-5555">
+          <div class="hint">Shown to customers on invoices and estimates you send.</div>
+        </div>
+
+        <div class="field">
+          <label for="email">Email</label>
+          <input type="email" id="email" autocomplete="email" placeholder="you@yourbusiness.com">
+        </div>
+
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" autocomplete="current-password" placeholder="At least 6 characters">
+        </div>
+
+        <div class="notice" id="trialNotice" style="display:none;">
+          30-day free trial, then $20/mo. You'll enter payment details on the next screen — cancel anytime before the trial ends and you won't be charged.
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="submitBtn">Sign In</button>
+      </form>
+
+      <div class="link-row" id="switchRow">
+        Don't have an account? <a href="#" id="switchLink">Start free trial</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { auth, db } from './js/firebase.js';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
+import { doc, setDoc } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
+import { registerServiceWorker, appUrl } from './js/util.js';
+
+registerServiceWorker();
+
+let isSignUp = false;
+
+const cardTitle = document.getElementById('cardTitle');
+const cardSub = document.getElementById('cardSub');
+const businessNameField = document.getElementById('businessNameField');
+const phoneField = document.getElementById('phoneField');
+const trialNotice = document.getElementById('trialNotice');
+const submitBtn = document.getElementById('submitBtn');
+const switchRow = document.getElementById('switchRow');
+const errorMsg = document.getElementById('errorMsg');
+
+function render() {
+  errorMsg.classList.remove('visible');
+  if (isSignUp) {
+    cardTitle.textContent = 'Start your free trial';
+    cardSub.textContent = '30 days free. Set up your business in about a minute.';
+    businessNameField.style.display = '';
+    phoneField.style.display = '';
+    trialNotice.style.display = '';
+    submitBtn.textContent = 'Continue to Payment Details';
+    switchRow.innerHTML = 'Already have an account? <a href="#" id="switchLink">Sign in</a>';
+  } else {
+    cardTitle.textContent = 'Welcome back';
+    cardSub.textContent = 'Sign in to your account.';
+    businessNameField.style.display = 'none';
+    phoneField.style.display = 'none';
+    trialNotice.style.display = 'none';
+    submitBtn.textContent = 'Sign In';
+    switchRow.innerHTML = "Don't have an account? <a href=\"#\" id=\"switchLink\">Start free trial</a>";
+  }
+  document.getElementById('switchLink').addEventListener('click', (e) => {
+    e.preventDefault();
+    isSignUp = !isSignUp;
+    render();
+  });
+}
+
+function showError(msg) {
+  errorMsg.textContent = msg;
+  errorMsg.classList.add('visible');
+}
+
+document.getElementById('authForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+
+  if (!email || !password) {
+    showError('Please enter your email and password.');
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Please wait...';
+
+  try {
+    if (isSignUp) {
+      const businessName = document.getElementById('businessName').value.trim();
+      const phone = document.getElementById('phone').value.trim();
+
+      if (!businessName) { showError('Please enter your business name.'); throw new Error('validation'); }
+
+      const result = await createUserWithEmailAndPassword(auth, email, password);
+      await setDoc(doc(db, 'users', result.user.uid), {
+        businessName,
+        email,
+        phone,
+        address: '',
+        logoUrl: '',
+        subscriptionStatus: 'pending_checkout',
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        stripeConnectAccountId: null,
+        stripeConnectOnboarded: false,
+        docCounter: 0,
+        createdAt: new Date().toISOString(),
+      });
+
+      // Hand off to Stripe Checkout for the app subscription (30-day trial,
+      // card required upfront). billing-success.html waits for the webhook
+      // to flip subscriptionStatus before letting them into the app.
+      const res = await fetch('.netlify/functions/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          uid: result.user.uid,
+          email,
+          successUrl: appUrl('billing-success.html?session_id={CHECKOUT_SESSION_ID}'),
+          cancelUrl: appUrl('login.html?canceled=1'),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.checkout_url) {
+        showError("Couldn't start checkout. Please try again.");
+        throw new Error('validation');
+      }
+      window.location.href = data.checkout_url;
+      return;
+    } else {
+      await signInWithEmailAndPassword(auth, email, password);
+      window.location.href = 'app.html';
+    }
+  } catch (err) {
+    if (err.message !== 'validation') {
+      let msg = 'Something went wrong. Please try again.';
+      if (err.code === 'auth/email-already-in-use') msg = 'That email is already registered. Try signing in.';
+      if (err.code === 'auth/invalid-email') msg = 'Please enter a valid email address.';
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') msg = 'Incorrect email or password.';
+      if (err.code === 'auth/weak-password') msg = 'Password must be at least 6 characters.';
+      showError(msg);
+    }
+  }
+
+  submitBtn.disabled = false;
+  submitBtn.textContent = isSignUp ? 'Continue to Payment Details' : 'Sign In';
+});
+
+if (new URLSearchParams(window.location.search).get('canceled')) {
+  showError("Checkout was canceled — you can try again whenever you're ready.");
+}
+
+render();
+</script>
+
+</body>
+</html>

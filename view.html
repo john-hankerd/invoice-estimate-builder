@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Invoice — Invoice &amp; Estimate Builder</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+<div id="content" style="display:none;">
+  <div class="app-header no-print" id="ownerBar" style="display:none;">
+    <a href="app.html" style="font-size:20px; padding:4px;">← Back</a>
+    <div style="display:flex; gap:8px;">
+      <button class="btn btn-outline btn-sm" id="convertBtn" style="display:none;">Convert to Invoice</button>
+    </div>
+  </div>
+
+  <div class="doc-view">
+    <div class="notice no-print" id="statusNotice" style="display:none;"></div>
+
+    <div class="doc-header">
+      <div>
+        <div id="logoWrap"></div>
+        <div class="doc-party-name" id="businessName"></div>
+        <div class="doc-meta" id="businessContact"></div>
+      </div>
+      <div style="text-align:right;">
+        <div class="doc-title" id="docTitle">Invoice</div>
+        <div class="doc-meta" id="docNumberDisplay"></div>
+        <div class="doc-meta" id="docDateDisplay"></div>
+      </div>
+    </div>
+
+    <div class="doc-parties">
+      <div>
+        <div class="doc-party-label">Bill To</div>
+        <div class="doc-party-name" id="customerName"></div>
+        <div class="doc-meta" id="customerEmail"></div>
+      </div>
+      <div style="text-align:right;">
+        <div class="doc-party-label" id="dueDateLabel">Due</div>
+        <div id="dueDateDisplay"></div>
+      </div>
+    </div>
+
+    <div class="line-items">
+      <div class="line-item-row header" style="grid-template-columns:1fr 60px 90px 90px;">
+        <div>Description</div><div>Qty</div><div>Price</div><div>Total</div>
+      </div>
+      <div id="lineItemsView"></div>
+    </div>
+
+    <div class="totals-box">
+      <div class="totals-row"><span>Subtotal</span><span id="subtotalView"></span></div>
+      <div class="totals-row" id="taxRow"><span>Tax</span><span id="taxView"></span></div>
+      <div class="totals-row grand"><span>Total</span><span id="totalView"></span></div>
+    </div>
+
+    <div id="notesBlock" style="margin-top:20px; font-size:13.5px; color:var(--ink-soft); display:none;">
+      <div class="doc-party-label">Notes</div>
+      <div id="notesView"></div>
+    </div>
+
+    <div class="no-print" style="display:flex; gap:10px; margin-top:28px; flex-wrap:wrap;">
+      <button class="btn btn-outline" id="printBtn" style="width:auto;">Download / Print PDF</button>
+      <button class="btn btn-primary" id="payBtn" style="width:auto; display:none;">Pay Now</button>
+      <button class="btn btn-primary" id="approveBtn" style="width:auto; display:none;">Approve Estimate</button>
+      <button class="btn btn-outline" id="declineBtn" style="width:auto; display:none;">Decline</button>
+    </div>
+  </div>
+</div>
+
+<div class="loading-center" id="loadingScreen">Loading...</div>
+
+<script type="module">
+import { auth, db } from './js/firebase.js';
+import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
+import { doc, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
+import { formatMoney, formatDate, randomToken, appUrl, escapeHtml } from './js/util.js';
+
+const params = new URLSearchParams(window.location.search);
+const docId = params.get('id');
+const isOwnerView = params.get('owner') === '1';
+
+if (!docId) {
+  document.getElementById('loadingScreen').textContent = 'Invalid link.';
+} else {
+  load();
+}
+
+let data = null;
+let currentUid = null;
+
+async function load() {
+  const snap = await getDoc(doc(db, 'docs', docId));
+  if (!snap.exists()) {
+    document.getElementById('loadingScreen').textContent = "This link isn't valid — the invoice may have been deleted.";
+    return;
+  }
+  data = snap.data();
+
+  if (isOwnerView) {
+    onAuthStateChanged(auth, (user) => {
+      currentUid = user?.uid || null;
+      render();
+    });
+  } else {
+    render();
+  }
+}
+
+function render() {
+  document.getElementById('loadingScreen').style.display = 'none';
+  document.getElementById('content').style.display = 'block';
+
+  const isEstimate = data.type === 'estimate';
+  document.title = `${isEstimate ? 'Estimate' : 'Invoice'} #${data.number} — ${data.business?.name || ''}`;
+  document.getElementById('docTitle').textContent = isEstimate ? 'Estimate' : 'Invoice';
+  document.getElementById('docNumberDisplay').textContent = `#${data.number}`;
+  document.getElementById('docDateDisplay').textContent = data.sentAt ? formatDate(data.sentAt.slice(0, 10)) : '';
+  document.getElementById('dueDateLabel').textContent = isEstimate ? 'Valid Until' : 'Due';
+  document.getElementById('dueDateDisplay').textContent = data.dueDate ? formatDate(data.dueDate) : '—';
+
+  document.getElementById('businessName').textContent = data.business?.name || '';
+  const contactParts = [data.business?.phone, data.business?.address].filter(Boolean);
+  document.getElementById('businessContact').textContent = contactParts.join(' · ');
+  if (data.business?.logoUrl) {
+    document.getElementById('logoWrap').innerHTML = `<div class="avatar avatar-lg" style="margin-bottom:8px;"><img src="${data.business.logoUrl}" alt=""></div>`;
+  }
+
+  document.getElementById('customerName').textContent = data.customerName || '';
+  document.getElementById('customerEmail').textContent = data.customerEmail || '';
+
+  document.getElementById('lineItemsView').innerHTML = (data.lineItems || []).map(item => `
+    <div class="line-item-row" style="grid-template-columns:1fr 60px 90px 90px;">
+      <div>${escapeHtml(item.description)}</div>
+      <div>${item.qty}</div>
+      <div>${formatMoney(item.unitPriceCents)}</div>
+      <div style="text-align:right; font-weight:700;">${formatMoney(item.lineTotalCents)}</div>
+    </div>
+  `).join('');
+
+  document.getElementById('subtotalView').textContent = formatMoney(data.subtotalCents);
+  document.getElementById('taxView').textContent = formatMoney(data.taxCents);
+  document.getElementById('taxRow').querySelector('span').textContent = `Tax (${data.taxRate || 0}%)`;
+  document.getElementById('totalView').textContent = formatMoney(data.totalCents);
+
+  if (data.notes) {
+    document.getElementById('notesBlock').style.display = 'block';
+    document.getElementById('notesView').textContent = data.notes;
+  }
+
+  renderStatusAndActions(isEstimate);
+
+  if (isOwnerView && currentUid && currentUid === data.ownerUid) {
+    document.getElementById('ownerBar').style.display = 'flex';
+    if (isEstimate && data.status === 'approved' && !data.convertedToInvoiceId) {
+      document.getElementById('convertBtn').style.display = '';
+    }
+  }
+}
+
+function renderStatusAndActions(isEstimate) {
+  const notice = document.getElementById('statusNotice');
+  const payBtn = document.getElementById('payBtn');
+  const approveBtn = document.getElementById('approveBtn');
+  const declineBtn = document.getElementById('declineBtn');
+
+  if (isOwnerView) {
+    // Business previewing their own doc — no customer action buttons.
+    if (data.status !== 'draft') {
+      notice.style.display = 'block';
+      notice.textContent = `Status: ${data.status}. This is a preview of what your customer sees below.`;
+    }
+    return;
+  }
+
+  if (data.status === 'paid') {
+    notice.classList.add('notice-success');
+    notice.style.display = 'block';
+    notice.textContent = 'This invoice has been paid. Thank you!';
+    return;
+  }
+
+  if (data.status === 'approved') {
+    notice.classList.add('notice-success');
+    notice.style.display = 'block';
+    notice.textContent = "You've approved this estimate.";
+    return;
+  }
+
+  if (data.status === 'declined') {
+    notice.style.display = 'block';
+    notice.textContent = 'This estimate was declined.';
+    return;
+  }
+
+  if (data.status !== 'sent') return;
+
+  if (isEstimate) {
+    approveBtn.style.display = '';
+    declineBtn.style.display = '';
+  } else if (data.business?.stripeConnectAccountId || true) {
+    // Pay Now shows for any sent invoice; the payment function itself
+    // checks whether the business has finished connecting Stripe.
+    payBtn.style.display = '';
+  }
+}
+
+document.getElementById('printBtn').addEventListener('click', () => window.print());
+
+document.getElementById('approveBtn').addEventListener('click', () => respondToEstimate('approved'));
+document.getElementById('declineBtn').addEventListener('click', () => respondToEstimate('declined'));
+
+async function respondToEstimate(response) {
+  const btn = response === 'approved' ? document.getElementById('approveBtn') : document.getElementById('declineBtn');
+  btn.disabled = true;
+  btn.textContent = 'Please wait...';
+  try {
+    const res = await fetch('.netlify/functions/respond-to-estimate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ docId, response }),
+    });
+    if (!res.ok) throw new Error('failed');
+    data.status = response;
+    document.getElementById('approveBtn').style.display = 'none';
+    document.getElementById('declineBtn').style.display = 'none';
+    renderStatusAndActions(true);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = response === 'approved' ? 'Approve Estimate' : 'Decline';
+    alert("Something went wrong. Please try again.");
+  }
+}
+
+document.getElementById('convertBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('convertBtn');
+  btn.disabled = true;
+  btn.textContent = 'Converting...';
+  const newId = randomToken(20);
+  await setDoc(doc(db, 'docs', newId), {
+    ownerUid: data.ownerUid,
+    type: 'invoice',
+    status: 'draft',
+    customerName: data.customerName,
+    customerEmail: data.customerEmail,
+    dueDate: '',
+    notes: data.notes || '',
+    lineItems: data.lineItems,
+    subtotalCents: data.subtotalCents,
+    taxCents: data.taxCents,
+    totalCents: data.totalCents,
+    taxRate: data.taxRate,
+    business: data.business,
+    convertedFromEstimateId: docId,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  await setDoc(doc(db, 'docs', docId), { convertedToInvoiceId: newId }, { merge: true });
+  window.location.href = `edit.html?id=${newId}`;
+});
+
+document.getElementById('payBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('payBtn');
+  btn.disabled = true;
+  btn.textContent = 'Please wait...';
+  try {
+    const res = await fetch('.netlify/functions/create-invoice-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        docId,
+        successUrl: appUrl(`view.html?id=${docId}&paid=1`),
+        cancelUrl: appUrl(`view.html?id=${docId}`),
+      }),
+    });
+    const result = await res.json();
+    if (result.checkout_url) {
+      window.location.href = result.checkout_url;
+    } else {
+      throw new Error(result.error || 'failed');
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Pay Now';
+    alert("This business hasn't finished setting up online payments yet. Please contact them directly.");
+  }
+});
+</script>
+
+</body>
+</html>
