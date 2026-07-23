@@ -45,7 +45,7 @@
         </div>
 
         <div class="notice" id="trialNotice" style="display:none;">
-          30-day free trial, then $20/mo. You'll enter payment details on the next screen — cancel anytime before the trial ends and you won't be charged.
+          30 days free — no card required. $19/mo or $209/yr after that, only if you decide to keep using it.
         </div>
 
         <button type="submit" class="btn btn-primary" id="submitBtn">Sign In</button>
@@ -81,11 +81,11 @@ function render() {
   errorMsg.classList.remove('visible');
   if (isSignUp) {
     cardTitle.textContent = 'Start your free trial';
-    cardSub.textContent = '30 days free. Set up your business in about a minute.';
+    cardSub.textContent = '30 days free, no card required. Set up your business in about a minute.';
     businessNameField.style.display = '';
     phoneField.style.display = '';
     trialNotice.style.display = '';
-    submitBtn.textContent = 'Continue to Payment Details';
+    submitBtn.textContent = 'Create Account';
     switchRow.innerHTML = 'Already have an account? <a href="#" id="switchLink">Sign in</a>';
   } else {
     cardTitle.textContent = 'Welcome back';
@@ -129,13 +129,18 @@ document.getElementById('authForm').addEventListener('submit', async (e) => {
       if (!businessName) { showError('Please enter your business name.'); throw new Error('validation'); }
 
       const result = await createUserWithEmailAndPassword(auth, email, password);
+      // 30-day trial starts immediately, no card required. A card is only
+      // ever collected later, via choose-plan.html, either voluntarily or
+      // once the trial ends (see app.html's billing gate).
+      const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       await setDoc(doc(db, 'users', result.user.uid), {
         businessName,
         email,
         phone,
         address: '',
         logoUrl: '',
-        subscriptionStatus: 'pending_checkout',
+        subscriptionStatus: 'trialing',
+        trialEndsAt,
         stripeCustomerId: null,
         stripeSubscriptionId: null,
         stripeConnectAccountId: null,
@@ -143,26 +148,7 @@ document.getElementById('authForm').addEventListener('submit', async (e) => {
         docCounter: 0,
         createdAt: new Date().toISOString(),
       });
-
-      // Hand off to Stripe Checkout for the app subscription (30-day trial,
-      // card required upfront). billing-success.html waits for the webhook
-      // to flip subscriptionStatus before letting them into the app.
-      const res = await fetch('.netlify/functions/create-checkout-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          uid: result.user.uid,
-          email,
-          successUrl: appUrl('billing-success.html?session_id={CHECKOUT_SESSION_ID}'),
-          cancelUrl: appUrl('login.html?canceled=1'),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.checkout_url) {
-        showError("Couldn't start checkout. Please try again.");
-        throw new Error('validation');
-      }
-      window.location.href = data.checkout_url;
+      window.location.href = 'app.html';
       return;
     } else {
       await signInWithEmailAndPassword(auth, email, password);
@@ -180,12 +166,8 @@ document.getElementById('authForm').addEventListener('submit', async (e) => {
   }
 
   submitBtn.disabled = false;
-  submitBtn.textContent = isSignUp ? 'Continue to Payment Details' : 'Sign In';
+  submitBtn.textContent = isSignUp ? 'Create Account' : 'Sign In';
 });
-
-if (new URLSearchParams(window.location.search).get('canceled')) {
-  showError("Checkout was canceled — you can try again whenever you're ready.");
-}
 
 render();
 </script>

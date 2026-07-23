@@ -16,39 +16,23 @@
       <div class="brand-name">Invoicing</div>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-title" id="statusTitle">Setting up your account...</div>
-      <div class="card-sub" id="statusSub">This only takes a few seconds.</div>
-      <div class="error-msg" id="errorMsg"></div>
+      <div class="card-title">You're all set!</div>
+      <div class="card-sub">Your card is on file. Head back in to keep creating and sending invoices.</div>
+      <button class="btn btn-primary" id="continueBtn" style="margin-top:8px;">Continue to Invoicing</button>
     </div>
   </div>
 </div>
 
 <script type="module">
-import { auth, db } from './js/firebase.js';
+import { auth } from './js/firebase.js';
 import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
-import { doc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
-
-const errorMsg = document.getElementById('errorMsg');
-const statusSub = document.getElementById('statusSub');
-
-let timeoutFired = false;
-const giveUpTimer = setTimeout(() => {
-  timeoutFired = true;
-  statusSub.textContent = "This is taking longer than expected.";
-  errorMsg.textContent = "If this doesn't finish in a minute, refresh this page — your payment went through, we're just waiting to hear back from Stripe.";
-  errorMsg.classList.add('visible');
-}, 20000);
 
 onAuthStateChanged(auth, (user) => {
-  if (!user) { window.location.href = 'login.html'; return; }
+  if (!user) { window.location.href = 'login.html'; }
+});
 
-  onSnapshot(doc(db, 'users', user.uid), (snap) => {
-    const status = snap.data()?.subscriptionStatus;
-    if (status && status !== 'pending_checkout') {
-      clearTimeout(giveUpTimer);
-      window.location.href = 'app.html';
-    }
-  });
+document.getElementById('continueBtn').addEventListener('click', () => {
+  window.location.href = 'app.html';
 });
 </script>
 

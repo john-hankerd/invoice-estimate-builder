@@ -16,9 +16,9 @@
       <div class="brand-name">Invoicing</div>
     </div>
     <div class="card" style="text-align:center;">
-      <div class="card-title" id="gateTitle">Your trial has ended</div>
-      <div class="card-sub" id="gateSub">Subscribe for $20/mo to keep creating and sending invoices.</div>
-      <button class="btn btn-primary" id="reactivateBtn">Resubscribe</button>
+      <div class="card-title" id="gateTitle">Your free trial has ended</div>
+      <div class="card-sub" id="gateSub">Add a card ($19/mo or $209/yr) to keep creating and sending invoices.</div>
+      <button class="btn btn-primary" id="reactivateBtn">Add Card</button>
       <button class="btn btn-outline" id="gateSignOutBtn" style="margin-top:10px;">Sign Out</button>
     </div>
   </div>
@@ -121,7 +121,14 @@ registerServiceWorker();
 let currentUser = null;
 let myProfile = null;
 
-const ACTIVE_STATUSES = ['trialing', 'active'];
+function hasActiveAccess(profile) {
+  if (!profile) return false;
+  if (profile.subscriptionStatus === 'active') return true;
+  if (profile.subscriptionStatus === 'trialing' && profile.trialEndsAt) {
+    return new Date(profile.trialEndsAt) > new Date();
+  }
+  return false;
+}
 
 onAuthStateChanged(auth, async (user) => {
   if (!user) { window.location.href = 'login.html'; return; }
@@ -165,14 +172,12 @@ function listenDocs(type, listElId, emptyIcon, emptyTitle, emptyDesc) {
 function render() {
   document.getElementById('loadingScreen').style.display = 'none';
 
-  if (!ACTIVE_STATUSES.includes(myProfile.subscriptionStatus)) {
+  if (!hasActiveAccess(myProfile)) {
     document.getElementById('mainScreen').style.display = 'none';
     document.getElementById('billingGate').style.display = 'flex';
-    if (myProfile.subscriptionStatus === 'pending_checkout') {
-      document.getElementById('gateTitle').textContent = 'Finish setting up your account';
-      document.getElementById('gateSub').textContent = "You'll need to add payment details to start your free trial.";
-      document.getElementById('reactivateBtn').textContent = 'Continue to Payment Details';
-    }
+    document.getElementById('gateTitle').textContent = 'Your free trial has ended';
+    document.getElementById('gateSub').textContent = 'Add a card ($19/mo or $209/yr) to keep creating and sending invoices.';
+    document.getElementById('reactivateBtn').textContent = 'Add Card';
     return;
   }
 
@@ -186,8 +191,10 @@ function render() {
   const logoPreview = document.getElementById('logoPreview');
   logoPreview.innerHTML = myProfile.logoUrl ? `<img src="${myProfile.logoUrl}" alt="">` : '🧾';
 
+  const trialActive = myProfile.subscriptionStatus === 'trialing' && myProfile.trialEndsAt && new Date(myProfile.trialEndsAt) > new Date();
+
   const trialBadge = document.getElementById('trialBadge');
-  if (myProfile.subscriptionStatus === 'trialing' && myProfile.trialEndsAt) {
+  if (trialActive) {
     const daysLeft = Math.max(0, Math.ceil((new Date(myProfile.trialEndsAt) - new Date()) / 86400000));
     trialBadge.textContent = `Trial: ${daysLeft} day${daysLeft === 1 ? '' : 's'} left`;
     trialBadge.style.display = '';
@@ -196,11 +203,14 @@ function render() {
   }
 
   const billingStatusText = document.getElementById('billingStatusText');
-  if (myProfile.subscriptionStatus === 'trialing') {
-    billingStatusText.textContent = `You're on your free trial${myProfile.trialEndsAt ? ` until ${new Date(myProfile.trialEndsAt).toLocaleDateString()}` : ''}. $20/mo after that.`;
+  if (trialActive) {
+    billingStatusText.textContent = `You're on your free trial until ${new Date(myProfile.trialEndsAt).toLocaleDateString()}. No card needed until then. $19/mo or $209/yr after that.`;
+  } else if (myProfile.subscriptionStatus === 'active') {
+    billingStatusText.textContent = `You're subscribed at ${myProfile.plan === 'annual' ? '$209/yr' : '$19/mo'}.`;
   } else {
-    billingStatusText.textContent = "You're subscribed at $20/mo.";
+    billingStatusText.textContent = "Not subscribed.";
   }
+  document.getElementById('managePlanBtn').textContent = myProfile.stripeCustomerId ? 'Manage Subscription' : 'Add Card';
 
   const connectStatusText = document.getElementById('connectStatusText');
   const connectBtn = document.getElementById('connectStripeBtn');
@@ -214,27 +224,8 @@ function render() {
 }
 
 /* ---------- Billing gate ---------- */
-document.getElementById('reactivateBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('reactivateBtn');
-  btn.disabled = true;
-  btn.textContent = 'Please wait...';
-  const res = await fetch('.netlify/functions/create-checkout-session', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      uid: currentUser.uid,
-      email: currentUser.email,
-      successUrl: appUrl('billing-success.html?session_id={CHECKOUT_SESSION_ID}'),
-      cancelUrl: appUrl('app.html'),
-    }),
-  });
-  const data = await res.json();
-  if (data.checkout_url) {
-    window.location.href = data.checkout_url;
-  } else {
-    btn.disabled = false;
-    btn.textContent = 'Resubscribe';
-  }
+document.getElementById('reactivateBtn').addEventListener('click', () => {
+  window.location.href = 'choose-plan.html';
 });
 
 document.getElementById('gateSignOutBtn').addEventListener('click', async () => {
@@ -272,6 +263,10 @@ document.getElementById('saveProfileBtn').addEventListener('click', async () => 
 
 /* ---------- Billing management ---------- */
 document.getElementById('managePlanBtn').addEventListener('click', async () => {
+  if (!myProfile.stripeCustomerId) {
+    window.location.href = 'choose-plan.html';
+    return;
+  }
   const btn = document.getElementById('managePlanBtn');
   btn.disabled = true;
   btn.textContent = 'Please wait...';

@@ -74,6 +74,7 @@ async function updateUserFromSubscription(sub) {
       stripeCustomerId: sub.customer,
       stripeSubscriptionId: sub.id,
       subscriptionStatus: sub.status,
+      plan: (sub.metadata && sub.metadata.plan) || "monthly",
       trialEndsAt: sub.trial_end ? new Date(sub.trial_end * 1000).toISOString() : null,
     },
     { merge: true }

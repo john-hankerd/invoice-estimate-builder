@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Add a card — Invoice &amp; Estimate Builder</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="manifest" href="manifest.json">
+<style>
+  .plan-card {
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 18px 20px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    position: relative;
+    text-align: left;
+  }
+  .plan-card.active { border-color: var(--accent); background: var(--accent-light); }
+  .plan-row { display: flex; justify-content: space-between; align-items: center; }
+  .plan-name { font-weight: 700; font-size: 15.5px; }
+  .plan-price { font-size: 19px; font-weight: 800; }
+  .plan-price span { font-size: 12px; font-weight: 400; color: var(--ink-faint); }
+  .plan-desc { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; }
+  .plan-badge {
+    position: absolute; top: -9px; right: 14px;
+    background: var(--accent); color: #fff; font-size: 10px; font-weight: 800;
+    letter-spacing: 0.03em; border-radius: 999px; padding: 3px 9px;
+  }
+  .fineprint { font-size: 12px; color: var(--ink-faint); text-align: center; margin-top: 14px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<div class="screen">
+  <div class="center-screen">
+    <div class="brand">
+      <div class="brand-mark">🧾</div>
+      <div class="brand-name">Invoicing</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Add a card</div>
+      <div class="card-sub" id="cardSub">Choose a plan to keep using Invoicing.</div>
+
+      <div class="error-msg" id="errorMsg"></div>
+
+      <div id="canceledNotice" class="notice" style="display:none;">
+        Checkout was canceled — pick a plan whenever you're ready.
+      </div>
+
+      <div class="plan-card active" id="monthlyCard" data-plan="monthly">
+        <div class="plan-row">
+          <span class="plan-name">Monthly</span>
+          <span class="plan-price">$19<span>/mo</span></span>
+        </div>
+        <div class="plan-desc">Billed every month. Cancel anytime.</div>
+      </div>
+
+      <div class="plan-card" id="annualCard" data-plan="annual">
+        <div class="plan-badge">BEST VALUE</div>
+        <div class="plan-row">
+          <span class="plan-name">Annual</span>
+          <span class="plan-price">$209<span>/yr</span></span>
+        </div>
+        <div class="plan-desc">2 months free compared to monthly.</div>
+      </div>
+
+      <button type="button" class="btn btn-primary" id="addCardBtn" style="margin-top:8px;">Add Card</button>
+
+      <div class="fineprint" id="fineprint"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { auth, db } from './js/firebase.js';
+import { onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js';
+import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js';
+import { appUrl } from './js/util.js';
+
+let currentUser = null;
+let selectedPlan = 'monthly';
+let trialEndsAt = null;
+
+const errorMsg = document.getElementById('errorMsg');
+const addCardBtn = document.getElementById('addCardBtn');
+const fineprint = document.getElementById('fineprint');
+const monthlyCard = document.getElementById('monthlyCard');
+const annualCard = document.getElementById('annualCard');
+
+function showError(msg) {
+  errorMsg.textContent = msg;
+  errorMsg.classList.add('visible');
+}
+
+function selectPlan(plan) {
+  selectedPlan = plan;
+  monthlyCard.classList.toggle('active', plan === 'monthly');
+  annualCard.classList.toggle('active', plan === 'annual');
+}
+
+monthlyCard.addEventListener('click', () => selectPlan('monthly'));
+annualCard.addEventListener('click', () => selectPlan('annual'));
+
+function updateFineprint() {
+  if (trialEndsAt) {
+    const daysLeft = Math.max(0, Math.ceil((new Date(trialEndsAt) - new Date()) / 86400000));
+    if (daysLeft > 0) {
+      fineprint.textContent = `You won't be charged until your free trial ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}. Cancel anytime before then.`;
+      return;
+    }
+  }
+  fineprint.textContent = "Your free trial has ended, so you'll be charged as soon as you add a card.";
+}
+
+onAuthStateChanged(auth, async (user) => {
+  if (!user) { window.location.href = 'login.html'; return; }
+  currentUser = user;
+  const snap = await getDoc(doc(db, 'users', user.uid));
+  trialEndsAt = snap.data()?.trialEndsAt || null;
+  updateFineprint();
+});
+
+addCardBtn.addEventListener('click', async () => {
+  if (!currentUser) return;
+  addCardBtn.disabled = true;
+  addCardBtn.textContent = 'Please wait...';
+
+  try {
+    const res = await fetch('.netlify/functions/create-checkout-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uid: currentUser.uid,
+        email: currentUser.email,
+        plan: selectedPlan,
+        trialEndsAt,
+        successUrl: appUrl('billing-success.html?session_id={CHECKOUT_SESSION_ID}'),
+        cancelUrl: appUrl('choose-plan.html?canceled=1'),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.checkout_url) {
+      showError("Couldn't start checkout. Please try again.");
+      addCardBtn.disabled = false;
+      addCardBtn.textContent = 'Add Card';
+      return;
+    }
+    window.location.href = data.checkout_url;
+  } catch (e) {
+    showError('Something went wrong. Please try again.');
+    addCardBtn.disabled = false;
+    addCardBtn.textContent = 'Add Card';
+  }
+});
+
+if (new URLSearchParams(window.location.search).get('canceled')) {
+  document.getElementById('canceledNotice').style.display = '';
+}
+</script>
+
+</body>
+</html>
