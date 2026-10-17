@@ -4,11 +4,13 @@
 //
 // This will also handle Stripe Connect payment events (a customer paying an
 // invoice) once that piece is built — for now it only tracks the app's own
-// $20/mo subscription.
+// $20/mo or $200/yr subscription. The billed amount is copied onto the user
+// doc so the app can show what that subscription actually costs.
 
 const https = require("https");
 const crypto = require("crypto");
 const admin = require("firebase-admin");
+const { billedPriceFields } = require("../lib/billed-price");
 
 // ─── CONFIG (Environment Variables in Netlify) ──────────────────────────────
 // STRIPE_SECRET_KEY            — Stripe live secret key
@@ -76,6 +78,7 @@ async function updateUserFromSubscription(sub) {
       subscriptionStatus: sub.status,
       plan: (sub.metadata && sub.metadata.plan) || "monthly",
       trialEndsAt: sub.trial_end ? new Date(sub.trial_end * 1000).toISOString() : null,
+      ...billedPriceFields(sub),
     },
     { merge: true }
   );
