@@ -17,7 +17,7 @@
     </div>
     <div class="card" style="text-align:center;">
       <div class="card-title" id="gateTitle">Your free trial has ended</div>
-      <div class="card-sub" id="gateSub">Add a card ($19/mo or $209/yr) to keep creating and sending invoices.</div>
+      <div class="card-sub" id="gateSub">Add a card ($20/mo or $200/yr) to keep creating and sending invoices.</div>
       <button class="btn btn-primary" id="reactivateBtn">Add Card</button>
       <button class="btn btn-outline" id="gateSignOutBtn" style="margin-top:10px;">Sign Out</button>
     </div>
@@ -121,6 +121,20 @@ registerServiceWorker();
 let currentUser = null;
 let myProfile = null;
 
+// Price recorded by the Stripe webhook (planAmountCents + planInterval).
+// Returns "$20/mo" or "$200/yr" style text, or null when this profile has
+// no stored amount yet.
+function formatStoredPlanPrice(profile) {
+  if (!profile) return null;
+  const cents = profile.planAmountCents;
+  const interval = profile.planInterval;
+  if (typeof cents !== 'number' || !Number.isFinite(cents) || cents < 0) return null;
+  if (interval !== 'month' && interval !== 'year') return null;
+  const dollars = cents / 100;
+  const amount = Number.isInteger(dollars) ? String(dollars) : dollars.toFixed(2);
+  return `$${amount}${interval === 'year' ? '/yr' : '/mo'}`;
+}
+
 function hasActiveAccess(profile) {
   if (!profile) return false;
   if (profile.subscriptionStatus === 'active') return true;
@@ -176,7 +190,7 @@ function render() {
     document.getElementById('mainScreen').style.display = 'none';
     document.getElementById('billingGate').style.display = 'flex';
     document.getElementById('gateTitle').textContent = 'Your free trial has ended';
-    document.getElementById('gateSub').textContent = 'Add a card ($19/mo or $209/yr) to keep creating and sending invoices.';
+    document.getElementById('gateSub').textContent = 'Add a card ($20/mo or $200/yr) to keep creating and sending invoices.';
     document.getElementById('reactivateBtn').textContent = 'Add Card';
     return;
   }
@@ -204,9 +218,20 @@ function render() {
 
   const billingStatusText = document.getElementById('billingStatusText');
   if (trialActive) {
-    billingStatusText.textContent = `You're on your free trial until ${new Date(myProfile.trialEndsAt).toLocaleDateString()}. No card needed until then. $19/mo or $209/yr after that.`;
+    const upcoming = formatStoredPlanPrice(myProfile);
+    const afterThat = upcoming ? `${upcoming} after that` : '$20/mo or $200/yr after that';
+    billingStatusText.textContent = `You're on your free trial until ${new Date(myProfile.trialEndsAt).toLocaleDateString()}. No card needed until then. ${afterThat}.`;
   } else if (myProfile.subscriptionStatus === 'active') {
-    billingStatusText.textContent = `You're subscribed at ${myProfile.plan === 'annual' ? '$209/yr' : '$19/mo'}.`;
+    const price = formatStoredPlanPrice(myProfile);
+    if (price) {
+      billingStatusText.textContent = `You're subscribed at ${price}.`;
+    } else {
+      // No amount stored yet (subscribers from before this field existed, until
+      // the next Stripe subscription webhook). Don't guess $20/$200 — they may
+      // still be billed at an older price.
+      const which = myProfile.plan === 'annual' ? 'annual' : 'monthly';
+      billingStatusText.textContent = `You're subscribed to the ${which} plan.`;
+    }
   } else {
     billingStatusText.textContent = "Not subscribed.";
   }

@@ -1,6 +1,6 @@
 // netlify/functions/create-portal-session.js
-// Lets a business manage their $20/mo app subscription (update card, cancel,
-// see invoices) through Stripe's hosted Customer Portal.
+// Lets a business manage their $20/mo or $200/yr app subscription (update card,
+// cancel, see invoices) through Stripe's hosted Customer Portal.
 
 const https = require("https");
 const querystring = require("querystring");

@@ -11,8 +11,8 @@ const querystring = require("querystring");
 
 // ─── CONFIG (Environment Variables in Netlify) ──────────────────────────────
 // STRIPE_SECRET_KEY      — Stripe live secret key (sk_live_...)
-// STRIPE_PRICE_MONTHLY   — the $19/mo recurring price ID
-// STRIPE_PRICE_ANNUAL    — the $209/yr recurring price ID
+// STRIPE_PRICE_MONTHLY   — the $20/mo recurring price ID
+// STRIPE_PRICE_ANNUAL    — the $200/yr recurring price ID (2 months free vs monthly)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function stripePost(path, body) {
